@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#16090d">
+  <title>UTM Convocation Photo Booth</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #16090d;
+      color: #fff8eb;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      --gold: #f5c66a;
+      --muted: #d3c4b8;
+      --red: #a61029;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      min-height: 100dvh;
+      margin: 0;
+      background:
+        radial-gradient(ellipse at 50% 12%, rgba(128, 27, 38, .44), transparent 48%),
+        linear-gradient(160deg, #251016, #10090c 68%);
+    }
+
+    button, input, select { font: inherit; }
+
+    .page {
+      width: min(100% - 32px, 920px);
+      margin-inline: auto;
+      padding: 32px 0 42px;
+    }
+
+    header { text-align: center; margin-bottom: 24px; }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--gold);
+      font-size: .75rem;
+      font-weight: 750;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(1.7rem, 5vw, 2.45rem);
+      font-weight: 600;
+      letter-spacing: -.025em;
+    }
+
+    .intro {
+      max-width: 520px;
+      margin: 10px auto 0;
+      color: var(--muted);
+      font-size: .94rem;
+      line-height: 1.55;
+    }
+
+    .booth {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(250px, .7fr);
+      align-items: center;
+      gap: clamp(22px, 5vw, 56px);
+      width: min(100%, 790px);
+      margin: auto;
+    }
+
+    .stage-wrap { display: flex; justify-content: center; min-width: 0; }
+
+    .stage {
+      position: relative;
+      width: min(100%, 390px);
+      aspect-ratio: 2160 / 4096;
+      overflow: hidden;
+      isolation: isolate;
+      border: 1px solid rgba(245, 198, 106, .48);
+      border-radius: 20px;
+      background: #090708;
+      box-shadow: 0 22px 65px rgba(0, 0, 0, .48), 0 0 32px rgba(166, 16, 41, .18);
+    }
+
+    .stage video, .stage .captured-image, .stage .frame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .stage video, .stage .captured-image { object-fit: cover; }
+    .stage video { display: none; }
+    .stage video.is-visible { display: block; }
+    .stage video.is-mirrored { transform: scaleX(-1); }
+    .stage .captured-image { display: none; object-fit: contain; }
+    .stage .captured-image.is-visible { display: block; }
+    .stage .frame { z-index: 2; height: 106.85%; pointer-events: none; object-fit: fill; }
+
+    .stage-placeholder {
+      position: absolute;
+      inset: 25% 12% 25%;
+      display: grid;
+      place-content: center;
+      gap: 10px;
+      padding: 24px;
+      color: #e8d8c0;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .stage-placeholder[hidden] { display: none; }
+    .stage-placeholder strong { color: var(--gold); font-size: 1.05rem; }
+    .stage-placeholder span { font-size: .88rem; }
+
+    .countdown {
+      position: absolute;
+      z-index: 3;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: rgba(15, 8, 8, .2);
+      color: white;
+      font-size: clamp(5rem, 22vw, 9rem);
+      font-weight: 800;
+      text-shadow: 0 4px 30px rgba(0, 0, 0, .7);
+    }
+
+    .countdown[hidden] { display: none; }
+
+    .controls { display: grid; gap: 14px; align-content: center; }
+
+    .control-label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: .8rem;
+      font-weight: 650;
+    }
+
+    select, input[type="url"] {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid rgba(245, 198, 106, .3);
+      border-radius: 10px;
+      outline: none;
+      background: #211419;
+      color: #fff8eb;
+    }
+
+    select:focus-visible, input:focus-visible, button:focus-visible, a:focus-visible {
+      outline: 3px solid #ffe2a0;
+      outline-offset: 3px;
+    }
+
+    .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    button, .download-link {
+      display: inline-flex;
+      min-height: 48px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 15px;
+      border: 1px solid transparent;
+      border-radius: 11px;
+      cursor: pointer;
+      font-weight: 750;
+      text-align: center;
+      text-decoration: none;
+      transition: transform .16s ease, background .16s ease, border-color .16s ease;
+    }
+
+    button:hover:not(:disabled), .download-link:hover { transform: translateY(-1px); }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+
+    .primary {
+      background: linear-gradient(135deg, #f8d58c, #d89c39);
+      color: #291308;
+      box-shadow: 0 8px 22px rgba(216, 156, 57, .16);
+    }
+
+    .secondary, .download-link {
+      border-color: rgba(245, 198, 106, .37);
+      background: #28151b;
+      color: #ffe8bf;
+    }
+
+    .snap {
+      min-height: 56px;
+      background: linear-gradient(135deg, #bc1c34, #821026);
+      color: #fff;
+      font-size: 1rem;
+      box-shadow: 0 8px 24px rgba(166, 16, 41, .25);
+    }
+
+    .status {
+      min-height: 44px;
+      margin: 0;
+      color: var(--muted);
+      font-size: .88rem;
+      line-height: 1.5;
+    }
+
+    .status[data-state="error"] { color: #ff9a9a; }
+    .status[data-state="success"] { color: #b7efc7; }
+    .download-link[hidden] { display: none; }
+
+    details {
+      margin-top: 6px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(245, 198, 106, .16);
+    }
+
+    summary { color: #f2d4a0; cursor: pointer; font-size: .88rem; font-weight: 700; }
+    .upload-settings { display: grid; gap: 10px; padding-top: 12px; }
+    .upload-hint { margin: 0; color: #b9a9a0; font-size: .78rem; line-height: 1.5; }
+
+    .privacy-note {
+      margin: 28px auto 0;
+      color: #aa9990;
+      font-size: .78rem;
+      line-height: 1.5;
+      text-align: center;
+    }
+
+    @media (max-width: 680px) {
+      .page { width: min(100% - 24px, 460px); padding-top: 22px; }
+      header { margin-bottom: 18px; }
+      .booth { grid-template-columns: 1fr; gap: 18px; }
+      .stage { width: min(100%, 340px, calc((100dvh - 360px) * 2160 / 4096)); }
+      .controls { gap: 11px; }
+      .privacy-note { margin-top: 18px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <p class="eyebrow">UTM · 70th Convocation · 2026</p>
+      <h1>Your convocation moment</h1>
+      <p class="intro">Frame your photo, choose a camera, then smile. Your finished portrait can be saved to Google Drive.</p>
+    </header>
+
+    <section class="booth" aria-label="Convocation photo booth">
+      <div class="stage-wrap">
+        <div class="stage" id="stage">
+          <video id="video" autoplay muted playsinline aria-label="Live camera preview"></video>
+          <img class="captured-image" id="capturedImage" alt="Your captured photo with the convocation frame">
+          <div class="stage-placeholder" id="placeholder">
+            <strong>Ready for your photo?</strong>
+            <span>Allow camera access to see yourself in the frame.</span>
+          </div>
+          <img class="frame" src="./Convo%20frame.png" alt="">
+          <div class="countdown" id="countdown" role="status" aria-live="assertive" hidden></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div>
+          <label class="control-label" for="cameraSelect">Camera lens</label>
+          <select id="cameraSelect" aria-label="Choose a camera lens" disabled>
+            <option value="">Start the camera to find lenses</option>
+          </select>
+        </div>
+
+        <div class="button-row">
+          <button class="primary" id="startButton" type="button">Start camera</button>
+          <button class="secondary" id="switchButton" type="button" disabled>Switch lens</button>
+        </div>
+
+        <button class="snap" id="snapButton" type="button" disabled>Take photo</button>
+        <a class="download-link" id="downloadLink" hidden download="utm-convocation-photo.jpg">Download photo</a>
+        <p class="status" id="status" role="status" aria-live="polite">Camera access is only requested when you press Start camera.</p>
+
+        <details>
+          <summary>Google Drive upload settings</summary>
+          <div class="upload-settings">
+            <label class="control-label" for="scriptUrl">Apps Script web app URL</label>
+            <input id="scriptUrl" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/AKfycbyxL-cgFnA7_SGq8PfKzGnw9lLaCRdqDeHgeOP6TrJb5SVJpNl6HARQZgH5WdijAjDd/exec" autocomplete="url">
+            <button class="secondary" id="saveUrlButton" type="button">Save upload URL</button>
+            <p class="upload-hint">After deploying the included Apps Script, paste its web app URL here. It is stored in this browser only.</p>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <p class="privacy-note">Your camera stays on this device until you take a photo. When an upload URL is saved, the finished image is sent to that Google Apps Script.</p>
+  </main>
+
+  <iframe id="uploadFrame" name="uploadFrame" title="Google Drive upload" hidden></iframe>
+  <form id="uploadForm" method="post" target="uploadFrame" hidden>
+    <input type="hidden" name="payload" id="uploadPayload">
+  </form>
+
+  <script>
+    (() => {
+      const video = document.querySelector("#video");
+      const placeholder = document.querySelector("#placeholder");
+      const cameraSelect = document.querySelector("#cameraSelect");
+      const startButton = document.querySelector("#startButton");
+      const switchButton = document.querySelector("#switchButton");
+      const snapButton = document.querySelector("#snapButton");
+      const status = document.querySelector("#status");
+      const countdown = document.querySelector("#countdown");
+      const capturedImage = document.querySelector("#capturedImage");
+      const downloadLink = document.querySelector("#downloadLink");
+      const scriptUrlInput = document.querySelector("#scriptUrl");
+      const saveUrlButton = document.querySelector("#saveUrlButton");
+      const uploadForm = document.querySelector("#uploadForm");
+      const uploadPayload = document.querySelector("#uploadPayload");
+      const uploadFrame = document.querySelector("#uploadFrame");
+      const FRAME_WIDTH = 2160;
+      const FRAME_HEIGHT = 4096;
+      const FRAME_Y_SCALE = 1.0685;
+
+      let stream = null;
+      let cameras = [];
+      let countdownTimer = null;
+      let uploadTimer = null;
+      let imageUrl = null;
+      let pendingUploadId = null;
+
+      scriptUrlInput.value = localStorage.getItem("convoframe-script-url") || "";
+
+      function setStatus(message, state) {
+        status.textContent = message;
+        status.dataset.state = state || "";
+      }
+
+      function validScriptUrl(value) {
+        try {
+          const url = new URL(value);
+          return url.protocol === "https:" &&
+            url.hostname === "script.google.com" &&
+            /^\/macros\/s\/[^/]+\/exec\/?$/.test(url.pathname);
+        } catch {
+          return false;
+        }
+      }
+
+      async function refreshCameras(selectedId) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        cameras = devices.filter(device => device.kind === "videoinput");
+        cameraSelect.replaceChildren();
+
+        if (!cameras.length) {
+          cameraSelect.add(new Option("No cameras found", ""));
+          cameraSelect.disabled = true;
+          switchButton.disabled = true;
+          return;
+        }
+
+        cameras.forEach((camera, index) => {
+          cameraSelect.add(new Option(camera.label || `Camera ${index + 1}`, camera.deviceId));
+        });
+        cameraSelect.disabled = false;
+        cameraSelect.value = selectedId && cameras.some(camera => camera.deviceId === selectedId)
+          ? selectedId
+          : cameras[0].deviceId;
+        switchButton.disabled = false;
+      }
+
+      async function startCamera(deviceId, facingMode) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          setStatus("Camera access requires a supported browser and a secure HTTPS page (or localhost).", "error");
+          return;
+        }
+
+        startButton.disabled = true;
+        setStatus("Waiting for camera permission…");
+        try {
+          const videoConstraints = deviceId
+            ? { deviceId: { exact: deviceId }, width: { ideal: 2160 }, height: { ideal: 4096 } }
+            : { facingMode: { ideal: facingMode || "user" }, width: { ideal: 2160 }, height: { ideal: 4096 } };
+          const nextStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints });
+          if (stream) stream.getTracks().forEach(track => track.stop());
+          stream = nextStream;
+          video.srcObject = stream;
+          await video.play();
+
+          const track = stream.getVideoTracks()[0];
+          const settings = track.getSettings();
+          const selectedId = settings.deviceId || deviceId;
+          const selectedCamera = cameras.find(camera => camera.deviceId === selectedId);
+          const inferredFacing = selectedCamera && /back|rear|environment/i.test(selectedCamera.label)
+            ? "environment"
+            : "user";
+          const facing = settings.facingMode || facingMode || inferredFacing;
+          video.classList.toggle("is-mirrored", facing === "user");
+          video.classList.add("is-visible");
+          placeholder.hidden = true;
+          capturedImage.classList.remove("is-visible");
+          downloadLink.hidden = true;
+          snapButton.disabled = false;
+          startButton.textContent = "Camera ready";
+          await refreshCameras(selectedId);
+          setStatus("Camera ready. Your photo is captured after the 3-second countdown.");
+        } catch (error) {
+          startButton.disabled = false;
+          const messages = {
+            NotAllowedError: "Camera permission was denied. Allow camera access in your browser settings, then try again.",
+            NotFoundError: "No camera was found on this device.",
+            NotReadableError: "The camera is busy in another app. Close that app and try again.",
+            OverconstrainedError: "That lens is unavailable. Try another camera."
+          };
+          setStatus(messages[error.name] || `Could not start the camera: ${error.message}`, "error");
+        }
+      }
+
+      function getFacingMode() {
+        const track = stream && stream.getVideoTracks()[0];
+        const facing = track && track.getSettings().facingMode;
+        if (facing) return facing;
+        const selected = cameras.find(camera => camera.deviceId === cameraSelect.value);
+        return selected && /back|rear|environment/i.test(selected.label) ? "environment" : "user";
+      }
+
+      function switchLens() {
+        if (cameras.length > 1) {
+          const currentIndex = cameras.findIndex(camera => camera.deviceId === cameraSelect.value);
+          const next = cameras[(currentIndex + 1) % cameras.length];
+          startCamera(next.deviceId);
+          return;
+        }
+        startCamera(null, getFacingMode() === "user" ? "environment" : "user");
+      }
+
+      function drawCover(context, source, width, height, mirror) {
+        const scale = Math.max(width / source.videoWidth, height / source.videoHeight);
+        const drawWidth = source.videoWidth * scale;
+        const drawHeight = source.videoHeight * scale;
+        const x = (width - drawWidth) / 2;
+        const y = (height - drawHeight) / 2;
+        if (mirror) {
+          context.translate(width, 0);
+          context.scale(-1, 1);
+        }
+        context.drawImage(source, x, y, drawWidth, drawHeight);
+        if (mirror) context.setTransform(1, 0, 0, 1, 0, 0);
+      }
+
+      function capturePhoto() {
+        const canvas = document.createElement("canvas");
+        canvas.width = FRAME_WIDTH;
+        canvas.height = FRAME_HEIGHT;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          setStatus("This browser could not prepare the photo. Please try another browser.", "error");
+          return;
+        }
+        context.fillStyle = "#16090d";
+        context.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
+        drawCover(context, video, FRAME_WIDTH, FRAME_HEIGHT, video.classList.contains("is-mirrored"));
+        const frame = new Image();
+        frame.onload = () => {
+          context.drawImage(frame, 0, 0, FRAME_WIDTH, FRAME_HEIGHT * FRAME_Y_SCALE);
+          canvas.toBlob(blob => {
+            if (!blob) {
+              setStatus("The photo could not be created. Please try again.", "error");
+              return;
+            }
+            if (imageUrl) URL.revokeObjectURL(imageUrl);
+            imageUrl = URL.createObjectURL(blob);
+            capturedImage.src = imageUrl;
+            capturedImage.classList.add("is-visible");
+            video.classList.remove("is-visible");
+            downloadLink.href = imageUrl;
+            downloadLink.hidden = false;
+            snapButton.disabled = false;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            downloadLink.download = `utm-convocation-${timestamp}.jpg`;
+
+            const endpoint = scriptUrlInput.value.trim();
+            if (endpoint) {
+              if (!validScriptUrl(endpoint)) {
+                setStatus("Photo captured. The saved URL is not a valid Apps Script web app URL; update it in upload settings.", "error");
+                return;
+              }
+              uploadPhoto(blob, endpoint, downloadLink.download);
+            } else {
+              setStatus("Photo captured and ready to download. Add an Apps Script URL in upload settings to save it to Drive.", "success");
+            }
+          }, "image/jpeg", 0.92);
+        };
+        frame.onerror = () => {
+          snapButton.disabled = false;
+          setStatus("The convocation frame image could not be loaded.", "error");
+        };
+        frame.src = "./Convo%20frame.png";
+      }
+
+      function beginCountdown() {
+        if (!stream || snapButton.disabled) return;
+        snapButton.disabled = true;
+        let remaining = 3;
+        countdown.hidden = false;
+        countdown.textContent = String(remaining);
+        countdownTimer = window.setInterval(() => {
+          remaining -= 1;
+          if (remaining > 0) {
+            countdown.textContent = String(remaining);
+            return;
+          }
+          window.clearInterval(countdownTimer);
+          countdownTimer = null;
+          countdown.hidden = true;
+          capturePhoto();
+        }, 1000);
+      }
+
+      function uploadPhoto(blob, endpoint, fileName) {
+        const reader = new FileReader();
+        reader.onerror = () => setStatus("Photo captured, but it could not be prepared for Google Drive upload.", "error");
+        reader.onload = () => {
+          pendingUploadId = crypto.randomUUID();
+          if (uploadTimer) window.clearTimeout(uploadTimer);
+          uploadTimer = window.setTimeout(() => {
+            if (pendingUploadId) {
+              pendingUploadId = null;
+              setStatus("Photo captured, but Google Drive did not respond. Check your connection and Apps Script deployment.", "error");
+            }
+          }, 45000);
+          uploadForm.action = endpoint;
+          uploadPayload.value = JSON.stringify({
+            requestId: pendingUploadId,
+            fileName,
+            imageData: reader.result
+          });
+          setStatus("Photo captured. Uploading it to Google Drive…");
+          uploadForm.submit();
+        };
+        reader.readAsDataURL(blob);
+      }
+
+      startButton.addEventListener("click", () => startCamera());
+      switchButton.addEventListener("click", switchLens);
+      snapButton.addEventListener("click", beginCountdown);
+      cameraSelect.addEventListener("change", () => startCamera(cameraSelect.value));
+
+      saveUrlButton.addEventListener("click", () => {
+        const value = scriptUrlInput.value.trim();
+        if (value && !validScriptUrl(value)) {
+          setStatus("Enter the HTTPS web app URL ending in /exec from your Apps Script deployment.", "error");
+          return;
+        }
+        if (value) localStorage.setItem("convoframe-script-url", value);
+        else localStorage.removeItem("convoframe-script-url");
+        setStatus(value ? "Google Apps Script upload URL saved in this browser." : "Google Apps Script upload URL cleared.", "success");
+      });
+
+      window.addEventListener("message", event => {
+        if (event.source !== uploadFrame.contentWindow || !event.data || event.data.type !== "convoframe-upload") return;
+        if (event.data.requestId !== pendingUploadId) return;
+        pendingUploadId = null;
+        if (uploadTimer) {
+          window.clearTimeout(uploadTimer);
+          uploadTimer = null;
+        }
+        if (event.data.ok) {
+          setStatus("Your framed photo was saved to Google Drive.", "success");
+        } else {
+          setStatus(`Photo captured, but Google Drive upload failed: ${event.data.message || "Unknown error"}`, "error");
+        }
+      });
+
+      window.addEventListener("pagehide", () => {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        if (imageUrl) URL.revokeObjectURL(imageUrl);
+        if (countdownTimer) window.clearInterval(countdownTimer);
+        if (uploadTimer) window.clearTimeout(uploadTimer);
+      });
+    })();
+  </script>
+</body>
+</html>
