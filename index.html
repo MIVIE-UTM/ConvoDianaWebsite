@@ -144,7 +144,7 @@
       font-weight: 650;
     }
 
-    select, input[type="url"] {
+    select {
       width: 100%;
       min-height: 46px;
       padding: 10px 12px;
@@ -155,7 +155,18 @@
       color: #fff8eb;
     }
 
-    select:focus-visible, input:focus-visible, button:focus-visible, a:focus-visible {
+    input[type="range"] {
+      width: 100%;
+      min-height: 30px;
+      margin: 0;
+      accent-color: var(--gold);
+      cursor: pointer;
+    }
+
+    .zoom-control[hidden] { display: none; }
+    .zoom-value { float: right; color: var(--gold); font-variant-numeric: tabular-nums; }
+
+    select:focus-visible, input:focus-visible, button:focus-visible {
       outline: 3px solid #ffe2a0;
       outline-offset: 3px;
     }
@@ -292,6 +303,14 @@
           </select>
         </div>
 
+        <div class="zoom-control" id="zoomControl" hidden>
+          <label class="control-label" for="zoomSlider">
+            Camera zoom
+            <output class="zoom-value" id="zoomValue" for="zoomSlider">1.0×</output>
+          </label>
+          <input id="zoomSlider" type="range" min="1" max="1" step="0.1" value="1" aria-label="Camera zoom">
+        </div>
+
         <div class="button-row">
           <button class="primary" id="startButton" type="button">Start camera</button>
           <button class="secondary" id="switchButton" type="button" disabled>Switch lens</button>
@@ -325,6 +344,9 @@
       const video = document.querySelector("#video");
       const placeholder = document.querySelector("#placeholder");
       const cameraSelect = document.querySelector("#cameraSelect");
+      const zoomControl = document.querySelector("#zoomControl");
+      const zoomSlider = document.querySelector("#zoomSlider");
+      const zoomValue = document.querySelector("#zoomValue");
       const startButton = document.querySelector("#startButton");
       const switchButton = document.querySelector("#switchButton");
       const snapButton = document.querySelector("#snapButton");
@@ -339,6 +361,12 @@
       const uploadPayload = document.querySelector("#uploadPayload");
       const uploadFrame = document.querySelector("#uploadFrame");
       const UPLOAD_ENDPOINT = "https://script.google.com/macros/s/AKfycbyxL-cgFnA7_SGq8PfKzGnw9lLaCRdqDeHgeOP6TrJb5SVJpNl6HARQZgH5WdijAjDd/exec";
+      // Set the venue coordinates in decimal degrees before deployment.
+      const SERVICE_LOCATION = {
+        latitude: null,
+        longitude: null,
+        radiusMeters: 40
+      };
       const FRAME_WIDTH = 2160;
       const FRAME_HEIGHT = 4096;
       const FRAME_Y_SCALE = 1.0685;
@@ -357,15 +385,87 @@
         status.dataset.state = state || "";
       }
 
-      function validScriptUrl(value) {
-        try {
-          const url = new URL(value);
-          return url.protocol === "https:" &&
-            url.hostname === "script.google.com" &&
-            /^\/macros\/s\/[^/]+\/exec\/?$/.test(url.pathname);
-        } catch {
-          return false;
+      function distanceInMeters(latitude1, longitude1, latitude2, longitude2) {
+        const toRadians = degrees => degrees * Math.PI / 180;
+        const earthRadiusMeters = 6371000;
+        const latitudeDelta = toRadians(latitude2 - latitude1);
+        const longitudeDelta = toRadians(longitude2 - longitude1);
+        const haversine = Math.sin(latitudeDelta / 2) ** 2 +
+          Math.cos(toRadians(latitude1)) * Math.cos(toRadians(latitude2)) *
+          Math.sin(longitudeDelta / 2) ** 2;
+        return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+      }
+
+      function isServiceLocationConfigured() {
+        return Number.isFinite(SERVICE_LOCATION.latitude) &&
+          SERVICE_LOCATION.latitude >= -90 && SERVICE_LOCATION.latitude <= 90 &&
+          Number.isFinite(SERVICE_LOCATION.longitude) &&
+          SERVICE_LOCATION.longitude >= -180 && SERVICE_LOCATION.longitude <= 180;
+      }
+
+      function checkServiceRange() {
+        if (!isServiceLocationConfigured()) {
+          setStatus("The service location has not been configured yet. Please ask event staff for help.", "error");
+          return Promise.resolve(false);
         }
+        if (!navigator.geolocation) {
+          setStatus("Location access is unavailable in this browser. Enable location services to use the photo booth.", "error");
+          return Promise.resolve(false);
+        }
+
+        setStatus("Checking that you are within the photo booth service area…");
+        return new Promise(resolve => {
+          navigator.geolocation.getCurrentPosition(position => {
+            const distance = distanceInMeters(
+              position.coords.latitude,
+              position.coords.longitude,
+              SERVICE_LOCATION.latitude,
+              SERVICE_LOCATION.longitude
+            );
+            const accuracy = position.coords.accuracy;
+            if (!Number.isFinite(accuracy) || accuracy < 0) {
+              setStatus("Your location could not be verified accurately. Please enable location services and try again.", "error");
+              resolve(false);
+              return;
+            }
+            const furthestPossibleDistance = distance + accuracy;
+            if (furthestPossibleDistance > SERVICE_LOCATION.radiusMeters) {
+              const isClearlyOutside = distance - accuracy > SERVICE_LOCATION.radiusMeters;
+              if (isClearlyOutside) {
+                setStatus("I'm sorry, we are out of the service range. Please go to Dewan Canselori Hall to enable picture capturing.", "error");
+              } else {
+                setStatus("Your location is not precise enough to confirm the service range. Please move closer to Dewan Canselori Hall and try again.", "error");
+              }
+              resolve(false);
+              return;
+            }
+            resolve(true);
+          }, error => {
+            const message = error.code === error.PERMISSION_DENIED
+              ? "Location permission is needed to use the photo booth. Allow location access and try again."
+              : "Your location could not be verified. Please enable location services and try again.";
+            setStatus(message, "error");
+            resolve(false);
+          }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+        });
+      }
+
+      function updateZoomControl(track) {
+        const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+        const zoom = capabilities.zoom;
+        if (!zoom || !Number.isFinite(zoom.min) || !Number.isFinite(zoom.max) || zoom.max <= zoom.min) {
+          zoomControl.hidden = true;
+          return;
+        }
+
+        const settings = track.getSettings();
+        const currentZoom = Number.isFinite(settings.zoom) ? settings.zoom : zoom.min;
+        zoomSlider.min = String(zoom.min);
+        zoomSlider.max = String(zoom.max);
+        zoomSlider.step = String(zoom.step || 0.1);
+        zoomSlider.value = String(Math.min(zoom.max, Math.max(zoom.min, currentZoom)));
+        zoomValue.value = `${Number(zoomSlider.value).toFixed(1)}×`;
+        zoomControl.hidden = false;
       }
 
       async function refreshCameras(selectedId) {
@@ -390,13 +490,18 @@
         switchButton.disabled = false;
       }
 
-      async function startCamera(deviceId, facingMode) {
+      async function startCamera(deviceId, facingMode, verifyLocation = true) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           setStatus("Camera access requires a supported browser and a secure HTTPS page (or localhost).", "error");
           return;
         }
 
         startButton.disabled = true;
+        if (verifyLocation && !await checkServiceRange()) {
+          if (stream) stopCamera();
+          else startButton.disabled = false;
+          return;
+        }
         setStatus("Waiting for camera permission…");
         try {
           const videoConstraints = deviceId
@@ -409,6 +514,7 @@
           await video.play();
 
           const track = stream.getVideoTracks()[0];
+          updateZoomControl(track);
           const settings = track.getSettings();
           const selectedId = settings.deviceId || deviceId;
           const selectedCamera = cameras.find(camera => camera.deviceId === selectedId);
@@ -425,6 +531,7 @@
           await refreshCameras(selectedId);
           setStatus("Camera ready. Your photo is captured after the 3-second countdown.");
         } catch (error) {
+          zoomControl.hidden = true;
           startButton.disabled = false;
           const messages = {
             NotAllowedError: "Camera permission was denied. Allow camera access in your browser settings, then try again.",
@@ -448,10 +555,10 @@
         if (cameras.length > 1) {
           const currentIndex = cameras.findIndex(camera => camera.deviceId === cameraSelect.value);
           const next = cameras[(currentIndex + 1) % cameras.length];
-          startCamera(next.deviceId);
+          startCamera(next.deviceId, undefined, false);
           return;
         }
-        startCamera(null, getFacingMode() === "user" ? "environment" : "user");
+        startCamera(null, getFacingMode() === "user" ? "environment" : "user", false);
       }
 
       function drawCover(context, source, width, height, mirror) {
@@ -510,9 +617,13 @@
         frame.src = "./Convo%20frame.png";
       }
 
-      function beginCountdown() {
+      async function beginCountdown() {
         if (!stream || snapButton.disabled) return;
         snapButton.disabled = true;
+        if (!await checkServiceRange()) {
+          stopCamera();
+          return;
+        }
         let remaining = 3;
         countdown.hidden = false;
         countdown.textContent = String(remaining);
@@ -525,16 +636,36 @@
           window.clearInterval(countdownTimer);
           countdownTimer = null;
           countdown.hidden = true;
-          capturePhoto();
+          finishCountdown();
         }, 1000);
+      }
+
+      async function finishCountdown() {
+        if (!await checkServiceRange()) {
+          stopCamera();
+          return;
+        }
+        capturePhoto();
+      }
+
+      function stopCamera() {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        stream = null;
+        video.srcObject = null;
+        video.classList.remove("is-visible");
+        capturedImage.classList.remove("is-visible");
+        placeholder.hidden = false;
+        cameraSelect.disabled = true;
+        switchButton.disabled = true;
+        snapButton.disabled = true;
+        startButton.disabled = false;
+        startButton.textContent = "Start camera";
+        zoomControl.hidden = true;
       }
 
       function uploadPhoto(blob, endpoint, fileName) {
         const reader = new FileReader();
-        reader.onerror = () => {
-          snapButton.disabled = false;
-          setStatus("Photo downloaded, but it could not be prepared for Google Drive upload.", "error");
-        };
+        reader.onerror = () => { snapButton.disabled = false; };
         reader.onload = () => {
           pendingUploadId = crypto.randomUUID();
           if (uploadTimer) window.clearTimeout(uploadTimer);
@@ -542,7 +673,6 @@
             if (pendingUploadId) {
               pendingUploadId = null;
               snapButton.disabled = false;
-              setStatus("Photo captured, but Google Drive did not respond. Check your connection and Apps Script deployment.", "error");
             }
           }, 45000);
           uploadForm.action = endpoint;
@@ -551,7 +681,6 @@
             fileName,
             imageData: reader.result
           });
-          setStatus("Photo captured. Uploading it to Google Drive…");
           uploadForm.submit();
         };
         reader.readAsDataURL(blob);
@@ -567,9 +696,15 @@
         setStatus("Ready for another photo.");
       }
 
-      function downloadAndSavePhoto() {
-        if (!photoBlob || !validScriptUrl(UPLOAD_ENDPOINT)) {
-          setStatus("The photo or Google Drive upload configuration is unavailable. Please try again.", "error");
+      async function downloadAndSavePhoto() {
+        if (!photoBlob) {
+          setStatus("The photo is no longer available. Please take it again.", "error");
+          return;
+        }
+
+        downloadButton.disabled = true;
+        if (!await checkServiceRange()) {
+          downloadButton.disabled = false;
           return;
         }
 
@@ -580,14 +715,26 @@
         link.click();
         link.remove();
         reviewDialog.close();
+        downloadButton.disabled = false;
         snapButton.disabled = true;
+        setStatus("Your photo has been downloaded.");
         uploadPhoto(photoBlob, UPLOAD_ENDPOINT, photoFileName);
       }
+
+      zoomSlider.addEventListener("input", () => {
+        const track = stream && stream.getVideoTracks()[0];
+        const zoom = Number(zoomSlider.value);
+        zoomValue.value = `${zoom.toFixed(1)}×`;
+        if (!track || !track.applyConstraints) return;
+        track.applyConstraints({ advanced: [{ zoom }] }).catch(() => {
+          setStatus("This camera could not apply the selected zoom level.", "error");
+        });
+      });
 
       startButton.addEventListener("click", () => startCamera());
       switchButton.addEventListener("click", switchLens);
       snapButton.addEventListener("click", beginCountdown);
-      cameraSelect.addEventListener("change", () => startCamera(cameraSelect.value));
+      cameraSelect.addEventListener("change", () => startCamera(cameraSelect.value, undefined, false));
       retakeButton.addEventListener("click", retakePhoto);
       downloadButton.addEventListener("click", downloadAndSavePhoto);
       reviewDialog.addEventListener("cancel", event => {
@@ -605,10 +752,8 @@
         }
         if (event.data.ok) {
           snapButton.disabled = false;
-          setStatus("Your framed photo was saved to Google Drive.", "success");
         } else {
           snapButton.disabled = false;
-          setStatus(`Photo captured, but Google Drive upload failed: ${event.data.message || "Unknown error"}`, "error");
         }
       });
 
