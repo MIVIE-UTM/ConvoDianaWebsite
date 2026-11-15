@@ -161,7 +161,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
   // The gallery list comes from the same Apps Script web app (see doGet in gallery.gs).
   const GALLERY_ENDPOINT = UPLOAD_ENDPOINT + "?action=gallery";
   const GALLERY_REFRESH_MS = 60000;
-  const SERVICE_LOCATION = { latitude: 1.5586563, longitude: 103.6383276, radiusMeters: 40 };
+  const SERVICE_LOCATION = { latitude: 1.5586563, longitude: 103.6383276, radiusMeters: 100 };
   const MAX_ACCURACY_GRACE = 100, GOOD_ACCURACY = 30, LOCATION_WAIT_MS = 8000;
   const LOCATION_CACHE_MS = 10 * 60 * 1000, CACHE_KEY = "utm-booth-location-ok";
   const FRAME_WIDTH = 2160, FRAME_HEIGHT = 3840, FRAME_Y_SCALE = 1.0685;
