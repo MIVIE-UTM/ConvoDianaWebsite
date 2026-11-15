@@ -29,15 +29,15 @@ h1{margin:0;font:600 clamp(1.7rem,5vw,2.45rem) Georgia,serif;letter-spacing:-.02
 .track{display:flex;gap:14px;width:max-content;animation:scroll var(--duration,30s) linear infinite}
 .gallery:hover .track,.gallery:active .track{animation-play-state:paused}
 @keyframes scroll{to{transform:translateX(calc(-50% - 7px))}}
-.slide{flex:none;height:clamp(260px,46vh,400px);aspect-ratio:2160/4096;overflow:hidden;border:1px solid rgba(245,198,106,.4);border-radius:14px;background:#211419;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+.slide{flex:none;height:clamp(260px,46vh,400px);aspect-ratio:9/16;overflow:hidden;border:1px solid rgba(245,198,106,.4);border-radius:14px;background:#211419;box-shadow:0 10px 30px rgba(0,0,0,.4)}
 .slide img{display:block;width:100%;height:100%;object-fit:cover}
-.slide.empty{display:grid;place-items:center;background:url("./Convo%20frame.png") center/100% 100% no-repeat,#1c1115;color:#b9a99c;font-size:.8rem;line-height:1.5;text-align:center;opacity:.6}
+.slide.empty{display:grid;place-items:center;background:url("./Convo%20frame.png") center top/cover no-repeat,#1c1115;color:#b9a99c;font-size:.8rem;line-height:1.5;text-align:center;opacity:.6}
 .gallery-note{margin:10px 0 0;color:#aa9990;font-size:.8rem;text-align:center}
 
 /* Full-screen camera */
 .stage{position:fixed;z-index:30;inset:0;display:none;align-items:center;justify-content:center;background:#000;touch-action:none}
 .stage.active{display:flex}
-.view{position:relative;height:min(100%,calc(100vw * 4096 / 2160));aspect-ratio:2160/4096;overflow:hidden;background:#090708}
+.view{position:relative;height:min(100%,calc(100vw * 16 / 9));aspect-ratio:9/16;overflow:hidden;background:#090708}
 .view video,.view .frame{position:absolute;inset:0;width:100%;height:100%}
 .view video{object-fit:fill;transform:scale(var(--camera-zoom,1));transform-origin:center}
 .view video.is-mirrored{transform:scaleX(-1) scale(var(--camera-zoom,1))}
@@ -123,7 +123,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 </div>
 <div class="bar bottom">
 <button class="round" id="switchButton" type="button" aria-label="Switch camera" title="Switch camera" disabled>
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-6 6M10 20H4v-6m0 6 6-6"/><path d="M7 7h3l1.5 2h2L15 7h2v10H7z"/></svg>
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6 6 3.5 8.5 6M6 3.5V16a3 3 0 0 0 3 3h5M15.5 18l2.5 2.5 2.5-2.5M18 20.5V8a3 3 0 0 0-3-3h-5"/></svg>
 </button>
 <button class="round snap" id="snapButton" type="button" aria-label="Take photo" title="Take photo" disabled>
 <svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="14" r="10.5" stroke="currentColor" stroke-width="2"/><circle cx="14" cy="14" r="7" fill="currentColor"/></svg>
@@ -156,15 +156,15 @@ button:disabled{cursor:not-allowed;opacity:.5}
     gallery = $("#gallery"), track = $("#track"), galleryNote = $("#galleryNote");
 
   const UPLOAD_ENDPOINT = "https://script.google.com/macros/s/AKfycbyxL-cgFnA7_SGq8PfKzGnw9lLaCRdqDeHgeOP6TrJb5SVJpNl6HARQZgH5WdijAjDd/exec";
-  // Later: URL that returns JSON, either ["https://…jpg", …] or {"photos":[{"url":"https://…jpg"}, …]}
-  const GALLERY_ENDPOINT = "";
+  // The gallery list comes from the same Apps Script web app (see doGet in gallery.gs).
+  const GALLERY_ENDPOINT = UPLOAD_ENDPOINT + "?action=gallery";
   const GALLERY_REFRESH_MS = 60000;
   const SERVICE_LOCATION = { latitude: 1.5586563, longitude: 103.6383276, radiusMeters: 40 };
   const MAX_ACCURACY_GRACE = 100, GOOD_ACCURACY = 30, LOCATION_WAIT_MS = 8000;
   const LOCATION_CACHE_MS = 10 * 60 * 1000, CACHE_KEY = "utm-booth-location-ok";
-  const FRAME_WIDTH = 2160, FRAME_HEIGHT = 4096, FRAME_Y_SCALE = 1.0685;
-  const UPLOAD_WIDTH = 1080, UPLOAD_HEIGHT = 2048;
-  const WINDOW_HEIGHT = 0.6, VIEW_ASPECT = FRAME_WIDTH / FRAME_HEIGHT; // WINDOW_HEIGHT: share of the frame height the photo window needs filled
+  const FRAME_WIDTH = 2160, FRAME_HEIGHT = 3840, FRAME_Y_SCALE = 1.0685;
+  const UPLOAD_WIDTH = 1080, UPLOAD_HEIGHT = 1920;
+  const WINDOW_HEIGHT = 0.69, VIEW_ASPECT = FRAME_WIDTH / FRAME_HEIGHT; // WINDOW_HEIGHT: share of the frame height the photo window needs filled
 
   let stream = null, cameras = [], countdownTimer = null, toastTimer = null, imageUrl = null,
     photoBlob = null, photoCanvas = null, downloadUrl = null, photoToken = 0, photoFileName = "", cameraZoom = 1, nativeZoomRange = null,
@@ -349,8 +349,8 @@ button:disabled{cursor:not-allowed;opacity:.5}
     try {
       const target = cameras.find(c => c.deviceId === deviceId);
       const facing = target ? (/back|rear|environment/i.test(target.label) ? "environment" : "user") : facingMode || "user";
-      // No forced aspect ratio: forcing a tall shape makes phones crop into the sensor, which looks zoomed in.
-      const size = { width: { ideal: 1440 }, height: { ideal: 1920 } };
+      // Ask for 9:16, the same shape as the photo (the last fallback attempt below asks for nothing specific).
+      const size = { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } };
       const attempts = [deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: { ideal: facing }, ...size }];
       if (deviceId) attempts.push({ facingMode: { ideal: facing }, ...size });
       attempts.push({ facingMode: { ideal: facing } });
@@ -493,8 +493,11 @@ button:disabled{cursor:not-allowed;opacity:.5}
     clearTimeout(p.timer);
     p.iframe.remove();
     pendingUploads.delete(id);
-    if (ok) setStatus("Saved to Google Drive ✓", "success");
-    else setStatus(timedOut
+    if (ok) {
+      setStatus("Saved to Google Drive ✓", "success");
+      // The photo is now listed from Drive, so drop the temporary on-device copy to avoid a duplicate.
+      loadGallery().then(loaded => { if (loaded) { localPhotos = localPhotos.filter(x => x.id !== id); renderGallery(); } });
+    } else setStatus(timedOut
       ? "Your photo was downloaded, but we couldn't confirm the Google Drive upload."
       : "Your photo was downloaded, but the Google Drive upload failed.", "error");
   }
@@ -515,6 +518,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
     uploadForm.target = iframe.name;
     uploadPayload.value = JSON.stringify({ requestId: id, fileName, imageData: small.toDataURL("image/jpeg", 0.85) });
     uploadForm.submit();
+    return id;
   }
 
   function resumeCamera() {
@@ -539,20 +543,20 @@ button:disabled{cursor:not-allowed;opacity:.5}
     reviewDialog.close();
     const thumb = document.createElement("canvas");
     thumb.width = 540;
-    thumb.height = 1024;
-    thumb.getContext("2d").drawImage(photoCanvas, 0, 0, 540, 1024);
-    localPhotos.unshift(thumb.toDataURL("image/jpeg", 0.8));
+    thumb.height = 960;
+    thumb.getContext("2d").drawImage(photoCanvas, 0, 0, 540, 960);
+    const id = uploadPhoto(photoCanvas, photoFileName);
+    localPhotos.unshift({ id, url: thumb.toDataURL("image/jpeg", 0.8) });
     localPhotos.length = Math.min(localPhotos.length, 20);
     renderGallery();
     setStatus("Photo downloaded. Saving a copy to Google Drive…");
-    uploadPhoto(photoCanvas, photoFileName);
     resumeCamera(); // straight back to the live camera for the next person
   }
 
   /* ---------- Gallery ---------- */
   let serverPhotos = [], localPhotos = [], galleryKey = "";
   function renderGallery() {
-    const photos = [...localPhotos, ...serverPhotos];
+    const photos = [...localPhotos.map(p => p.url), ...serverPhotos];
     const base = photos.length ? photos : Array(6).fill(null);
     let list = [...base];
     while (list.length < 8) list = list.concat(base);
@@ -574,17 +578,18 @@ button:disabled{cursor:not-allowed;opacity:.5}
     galleryNote.hidden = photos.length > 0;
   }
   async function loadGallery() {
-    if (!GALLERY_ENDPOINT) return;
+    if (!GALLERY_ENDPOINT) return false;
     try {
       const res = await fetch(GALLERY_ENDPOINT, { cache: "no-store" });
       const data = await res.json();
       const urls = (Array.isArray(data) ? data : data.photos || []).map(x => typeof x === "string" ? x : x && x.url).filter(Boolean).slice(0, 60);
       const key = urls.join("|");
-      if (key === galleryKey) return; // unchanged: don't restart the scroll
+      if (key === galleryKey) return true; // unchanged: don't restart the scroll
       galleryKey = key;
       serverPhotos = urls;
       renderGallery();
-    } catch {}
+      return true;
+    } catch { return false; }
   }
 
   /* ---------- Events ---------- */
