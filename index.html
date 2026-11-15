@@ -40,6 +40,7 @@ h1{margin:0;font:600 clamp(1.7rem,5vw,2.45rem) Georgia,serif;letter-spacing:-.02
 .view{position:relative;height:min(100%,calc(100vw * 16 / 9));aspect-ratio:9/16;overflow:hidden;background:#090708}
 .view video,.view .frame{position:absolute;inset:0;width:100%;height:100%}
 .view video{object-fit:fill;transform:scale(var(--camera-zoom,1));transform-origin:center}
+.view .bg-video{object-fit:cover;filter:blur(22px) brightness(.8)}
 .view video.is-mirrored{transform:scaleX(-1) scale(var(--camera-zoom,1))}
 .view .frame{z-index:2;height:106.85%;pointer-events:none;object-fit:fill}
 .stage-msg{position:absolute;z-index:3;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:30px;background:#090708;color:#e8d8c0;line-height:1.5;text-align:center}
@@ -107,6 +108,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 
 <div class="stage" id="stage" role="dialog" aria-modal="true" aria-label="Camera">
 <div class="view" id="view">
+<video id="bgVideo" class="bg-video" autoplay muted playsinline aria-hidden="true" tabindex="-1" hidden></video>
 <video id="video" autoplay muted playsinline aria-label="Live camera preview"></video>
 <img class="frame" src="./Convo%20frame.png" alt="">
 <div class="stage-msg" id="stageMsg"><div class="spinner" aria-hidden="true"></div><span id="stageText">Opening camera…</span></div>
@@ -147,7 +149,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 <script>
 (() => {
   const $ = s => document.querySelector(s);
-  const stage = $("#stage"), video = $("#video"), stageMsg = $("#stageMsg"), stageText = $("#stageText"), processing = $("#processing"), toast = $("#toast"),
+  const stage = $("#stage"), video = $("#video"), bgVideo = $("#bgVideo"), stageMsg = $("#stageMsg"), stageText = $("#stageText"), processing = $("#processing"), toast = $("#toast"),
     cameraSelect = $("#cameraSelect"), zoomValue = $("#zoomValue"), startButton = $("#startButton"),
     closeButton = $("#closeButton"), switchButton = $("#switchButton"), snapButton = $("#snapButton"),
     status = $("#status"), countdown = $("#countdown"), reviewDialog = $("#reviewDialog"),
@@ -300,6 +302,9 @@ button:disabled{cursor:not-allowed;opacity:.5}
     stream = null;
     video.pause();
     video.srcObject = null;
+    bgVideo.pause();
+    bgVideo.srcObject = null;
+    bgVideo.hidden = true;
   }
 
   function closeBooth() {
@@ -334,6 +339,35 @@ button:disabled{cursor:not-allowed;opacity:.5}
     switchButton.disabled = false;
   }
 
+  async function cameraAlreadyAllowed() {
+    try { return (await navigator.permissions.query({ name: "camera" })).state === "granted"; } catch { return false; }
+  }
+  // getUserMedia can hang (never answer) on some phones when it dislikes a constraint, so give it a deadline.
+  function getStream(constraints, ms) {
+    const request = navigator.mediaDevices.getUserMedia({ audio: false, video: constraints });
+    if (!ms) return request;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(Object.assign(new Error("timeout"), { name: "TimeoutError" }));
+        request.then(late => late.getTracks().forEach(t => t.stop())).catch(() => {});
+      }, ms);
+      request.then(st => { clearTimeout(timer); resolve(st); }, e => { clearTimeout(timer); reject(e); });
+    });
+  }
+  // Ask the already-open camera for 9:16. If the camera can't do it, keep what it gave us (the preview adapts).
+  async function upgradeResolution(track) {
+    const wanted = [
+      { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } },
+      { width: { ideal: 1080 }, height: { ideal: 1920 } }
+    ];
+    for (const c of wanted) {
+      try {
+        await Promise.race([track.applyConstraints(c), wait(3000).then(() => { throw new Error("timeout"); })]);
+        return;
+      } catch {}
+    }
+  }
+
   async function startCamera(deviceId, facingMode, verifyLocation = true) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       failBooth("Camera access needs a supported browser and a secure (HTTPS) page.");
@@ -349,18 +383,20 @@ button:disabled{cursor:not-allowed;opacity:.5}
     try {
       const target = cameras.find(c => c.deviceId === deviceId);
       const facing = target ? (/back|rear|environment/i.test(target.label) ? "environment" : "user") : facingMode || "user";
-      // Ask for 9:16, the same shape as the photo (the last fallback attempt below asks for nothing specific).
-      const size = { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } };
-      const attempts = [deviceId ? { deviceId: { exact: deviceId }, ...size } : { facingMode: { ideal: facing }, ...size }];
-      if (deviceId) attempts.push({ facingMode: { ideal: facing }, ...size });
-      attempts.push({ facingMode: { ideal: facing } });
-
+      // Open the camera with no size demands first: every device answers that, and it shows the permission prompt.
+      const attempts = [deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: facing } }];
+      if (deviceId) attempts.push({ facingMode: { ideal: facing } });
+      attempts.push(true);
+      const granted = await cameraAlreadyAllowed();
       let next, lastError;
       for (let i = 0; i < attempts.length; i++) {
-        try { next = await navigator.mediaDevices.getUserMedia({ audio: false, video: attempts[i] }); break; }
-        catch (e) {
+        try {
+          // No deadline while the permission prompt may still be open; otherwise give up on a silent hang after 8s.
+          next = await getStream(attempts[i], granted || i > 0 ? 8000 : 0);
+          break;
+        } catch (e) {
           lastError = e;
-          if (!["NotReadableError", "OverconstrainedError", "NotFoundError", "AbortError"].includes(e.name) || i === attempts.length - 1) throw e;
+          if (!["NotReadableError", "OverconstrainedError", "NotFoundError", "AbortError", "TimeoutError"].includes(e.name) || i === attempts.length - 1) throw e;
           await wait(300 * (i + 1));
         }
       }
@@ -369,14 +405,18 @@ button:disabled{cursor:not-allowed;opacity:.5}
 
       stream = next;
       video.srcObject = stream;
+      bgVideo.srcObject = stream;
+      bgVideo.play().catch(() => {});
       await video.play();
-      layoutVideo();
       const t = stream.getVideoTracks()[0];
+      await upgradeResolution(t);
+      layoutVideo();
       updateZoomControl(t);
       const s = t.getSettings(), selectedId = s.deviceId || deviceId;
       const cam = cameras.find(c => c.deviceId === selectedId);
       const f = s.facingMode || facingMode || (cam && /back|rear|environment/i.test(cam.label) ? "environment" : "user");
       video.classList.toggle("is-mirrored", f === "user");
+      bgVideo.style.transform = f === "user" ? "scaleX(-1) scale(1.25)" : "scale(1.25)";
       stageMsg.hidden = true;
       snapButton.disabled = false;
       await refreshCameras(selectedId);
@@ -385,6 +425,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
       const messages = {
         NotAllowedError: "Camera permission was denied. Allow camera access in your browser settings, then tap Try again.",
         NotFoundError: "No camera was found on this device.",
+        TimeoutError: "The camera didn't respond. Close other apps that use the camera, then tap Try again.",
         NotReadableError: "The camera is busy. Close other camera apps or tabs, then tap Try again.",
         OverconstrainedError: "That lens is unavailable. Try another camera."
       };
@@ -411,11 +452,31 @@ button:disabled{cursor:not-allowed;opacity:.5}
   function fitScale(vw, vh) { // frame-widths per video pixel
     return Math.max(1 / vw, WINDOW_HEIGHT / (VIEW_ASPECT * vh));
   }
+  function hasGap(vw, vh) {
+    const k = fitScale(vw, vh);
+    return vw * k < 0.995 || vh * k * VIEW_ASPECT < 0.995;
+  }
+  // If the camera shape doesn't fill the frame (4:3, square…), fill the gap with a blurred copy of the picture instead of black.
+  function drawBackdrop(ctx, vw, vh) {
+    if (!hasGap(vw, vh)) return;
+    const t = document.createElement("canvas");
+    t.width = 36;
+    t.height = 64;
+    const tc = t.getContext("2d"), c = Math.max(36 / vw, 64 / vh);
+    if (video.classList.contains("is-mirrored")) { tc.translate(36, 0); tc.scale(-1, 1); }
+    tc.drawImage(video, (36 - vw * c) / 2, (64 - vh * c) / 2, vw * c, vh * c);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(t, 0, 0, FRAME_WIDTH, FRAME_HEIGHT); // upscaling the tiny copy gives the blur
+    ctx.fillStyle = "rgba(0,0,0,.25)";
+    ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
+  }
   function layoutVideo() {
     if (!video.videoWidth) return;
     const k = fitScale(video.videoWidth, video.videoHeight);
     const w = video.videoWidth * k, h = video.videoHeight * k * VIEW_ASPECT; // fractions of the frame
     Object.assign(video.style, { width: `${w * 100}%`, height: `${h * 100}%`, left: `${(1 - w) / 2 * 100}%`, top: `${(1 - h) / 2 * 100}%` });
+    bgVideo.hidden = !hasGap(video.videoWidth, video.videoHeight);
   }
 
   async function capturePhoto() {
@@ -432,6 +493,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
       const vw = video.videoWidth, vh = video.videoHeight;
       const k = FRAME_WIDTH * fitScale(vw, vh) * (nativeZoomRange ? 1 : cameraZoom);
       const dw = vw * k, dh = vh * k;
+      drawBackdrop(ctx, vw, vh);
       ctx.save();
       if (video.classList.contains("is-mirrored")) { ctx.translate(FRAME_WIDTH, 0); ctx.scale(-1, 1); }
       ctx.drawImage(video, (FRAME_WIDTH - dw) / 2, (FRAME_HEIGHT - dh) / 2, dw, dh);
