@@ -98,7 +98,8 @@
     .stage video, .stage .captured-image { object-fit: cover; }
     .stage video { display: none; }
     .stage video.is-visible { display: block; }
-    .stage video.is-mirrored { transform: scaleX(-1); }
+    .stage video { transform: scale(var(--camera-zoom, 1)); transform-origin: center; }
+    .stage video.is-mirrored { transform: scaleX(-1) scale(var(--camera-zoom, 1)); }
     .stage .captured-image { display: none; object-fit: contain; }
     .stage .captured-image.is-visible { display: block; }
     .stage .frame { z-index: 2; height: 106.85%; pointer-events: none; object-fit: fill; }
@@ -116,6 +117,7 @@
       border-radius: 0;
       box-shadow: none;
       background: #090708;
+      touch-action: none;
     }
 
     .camera-overlay {
@@ -135,10 +137,12 @@
     }
 
     .stage:fullscreen .camera-overlay, .stage.is-fullscreen .camera-overlay { display: grid; }
+    .camera-overlay { touch-action: pan-y; }
     .camera-overlay .control-label { margin-bottom: 4px; }
     .camera-overlay .button-row { grid-template-columns: 1fr 1fr; }
     .camera-overlay .snap { min-height: 48px; }
     .camera-top-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+    .zoom-control { color: var(--muted); font-size: .82rem; text-align: center; }
 
     .stage-placeholder {
       position: absolute;
@@ -190,14 +194,6 @@
       outline: none;
       background: #211419;
       color: #fff8eb;
-    }
-
-    input[type="range"] {
-      width: 100%;
-      min-height: 30px;
-      margin: 0;
-      accent-color: var(--gold);
-      cursor: pointer;
     }
 
     .zoom-control[hidden] { display: none; }
@@ -339,12 +335,8 @@
               </div>
               <button class="secondary" id="exitFullscreenButton" type="button">Exit full screen</button>
             </div>
-            <div class="zoom-control" id="zoomControl" hidden>
-              <label class="control-label" for="zoomSlider">
-                Camera zoom
-                <output class="zoom-value" id="zoomValue" for="zoomSlider">1.0×</output>
-              </label>
-              <input id="zoomSlider" type="range" min="1" max="1" step="0.1" value="1" aria-label="Camera zoom">
+            <div class="zoom-control" id="zoomControl" aria-live="polite">
+              Pinch the preview to zoom · <output class="zoom-value" id="zoomValue">1.0×</output>
             </div>
             <div class="button-row">
               <button class="secondary" id="switchButton" type="button" disabled>Switch lens</button>
@@ -388,7 +380,6 @@
       const placeholder = document.querySelector("#placeholder");
       const cameraSelect = document.querySelector("#cameraSelect");
       const zoomControl = document.querySelector("#zoomControl");
-      const zoomSlider = document.querySelector("#zoomSlider");
       const zoomValue = document.querySelector("#zoomValue");
       const startButton = document.querySelector("#startButton");
       const fullscreenButton = document.querySelector("#fullscreenButton");
@@ -424,6 +415,11 @@
       let photoBlob = null;
       let photoFileName = "";
       let pendingUploadId = null;
+      let cameraZoom = 1;
+      let nativeZoomRange = null;
+      let pinchStartDistance = 0;
+      let pinchStartZoom = 1;
+      const activePointers = new Map();
 
       function setStatus(message, state) {
         status.textContent = message;
@@ -498,19 +494,41 @@
       function updateZoomControl(track) {
         const capabilities = track.getCapabilities ? track.getCapabilities() : {};
         const zoom = capabilities.zoom;
-        if (!zoom || !Number.isFinite(zoom.min) || !Number.isFinite(zoom.max) || zoom.max <= zoom.min) {
-          zoomControl.hidden = true;
-          return;
-        }
-
+        nativeZoomRange = zoom && Number.isFinite(zoom.min) && Number.isFinite(zoom.max) && zoom.max > zoom.min
+          ? zoom
+          : null;
         const settings = track.getSettings();
-        const currentZoom = Number.isFinite(settings.zoom) ? settings.zoom : zoom.min;
-        zoomSlider.min = String(zoom.min);
-        zoomSlider.max = String(zoom.max);
-        zoomSlider.step = String(zoom.step || 0.1);
-        zoomSlider.value = String(Math.min(zoom.max, Math.max(zoom.min, currentZoom)));
-        zoomValue.value = `${Number(zoomSlider.value).toFixed(1)}×`;
-        zoomControl.hidden = false;
+        cameraZoom = nativeZoomRange && Number.isFinite(settings.zoom) ? settings.zoom : 1;
+        updateZoomDisplay();
+      }
+
+      function updateZoomDisplay() {
+        zoomValue.value = `${cameraZoom.toFixed(1)}×`;
+        zoomValue.textContent = `${cameraZoom.toFixed(1)}×`;
+        video.style.setProperty("--camera-zoom", String(nativeZoomRange ? 1 : cameraZoom));
+      }
+
+      function distanceBetweenPointers() {
+        const points = [...activePointers.values()];
+        if (points.length < 2) return 0;
+        return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      }
+
+      function applyPinchZoom(distance) {
+        if (!pinchStartDistance || distance <= 0) return;
+        const minimum = nativeZoomRange ? nativeZoomRange.min : 1;
+        const maximum = nativeZoomRange ? nativeZoomRange.max : 3;
+        const nextZoom = Math.min(maximum, Math.max(minimum, pinchStartZoom * distance / pinchStartDistance));
+        cameraZoom = nextZoom;
+        updateZoomDisplay();
+
+        const track = stream && stream.getVideoTracks()[0];
+        if (nativeZoomRange && track && track.applyConstraints) {
+          track.applyConstraints({ advanced: [{ zoom: nextZoom }] }).catch(() => {
+            nativeZoomRange = null;
+            updateZoomDisplay();
+          });
+        }
       }
 
       async function refreshCameras(selectedId) {
@@ -549,10 +567,12 @@
         setStatus("Waiting for camera permission…");
         const previousStream = stream;
         if (previousStream) {
-          previousStream.getTracks().forEach(track => track.stop());
+          const previousTracks = previousStream.getTracks();
+          previousTracks.forEach(track => track.stop());
           stream = null;
+          video.pause();
           video.srcObject = null;
-          await new Promise(resolve => window.setTimeout(resolve, 250));
+          await new Promise(resolve => window.setTimeout(resolve, 750));
         }
         video.classList.remove("is-visible");
         zoomControl.hidden = true;
@@ -565,7 +585,21 @@
           const videoConstraints = deviceId
             ? { deviceId: { exact: deviceId }, width: { ideal: 2160 }, height: { ideal: 4096 } }
             : { facingMode: { ideal: facingMode || "user" }, width: { ideal: 2160 }, height: { ideal: 4096 } };
-          const nextStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints });
+          let nextStream;
+          try {
+            nextStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoConstraints });
+          } catch (error) {
+            if (!deviceId || !["NotReadableError", "OverconstrainedError", "NotFoundError"].includes(error.name)) {
+              throw error;
+            }
+            const target = cameras.find(camera => camera.deviceId === deviceId);
+            const fallbackFacing = target && /back|rear|environment/i.test(target.label) ? "environment" : "user";
+            await new Promise(resolve => window.setTimeout(resolve, 750));
+            nextStream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { facingMode: { ideal: fallbackFacing }, width: { ideal: 1280 }, height: { ideal: 1920 } }
+            });
+          }
           stream = nextStream;
           video.srcObject = stream;
           await video.play();
@@ -587,10 +621,14 @@
           startButton.textContent = "Camera ready";
           fullscreenButton.disabled = false;
           await refreshCameras(selectedId);
+          if (deviceId && selectedId !== deviceId) {
+            setStatus("Camera switched using your device's available lens.");
+          }
           setStatus("Camera ready. Your photo is captured after the 3-second countdown.");
         } catch (error) {
           if (stream) stream.getTracks().forEach(track => track.stop());
           stream = null;
+          video.pause();
           video.srcObject = null;
           placeholder.hidden = false;
           zoomControl.hidden = true;
@@ -604,7 +642,7 @@
           const messages = {
             NotAllowedError: "Camera permission was denied. Allow camera access in your browser settings, then try again.",
             NotFoundError: "No camera was found on this device.",
-            NotReadableError: "The camera is busy in another app. Close that app and try again.",
+            NotReadableError: "The camera is busy or unavailable. Close other camera apps or browser tabs, then try again.",
             OverconstrainedError: "That lens is unavailable. Try another camera."
           };
           setStatus(messages[error.name] || `Could not start the camera: ${error.message}`, "error");
@@ -630,7 +668,8 @@
       }
 
       function drawCover(context, source, width, height, mirror) {
-        const scale = Math.max(width / source.videoWidth, height / source.videoHeight);
+        const scale = Math.max(width / source.videoWidth, height / source.videoHeight) *
+          (nativeZoomRange ? 1 : cameraZoom);
         const drawWidth = source.videoWidth * scale;
         const drawHeight = source.videoHeight * scale;
         const x = (width - drawWidth) / 2;
@@ -785,15 +824,36 @@
         uploadPhoto(photoBlob, UPLOAD_ENDPOINT, photoFileName);
       }
 
-      zoomSlider.addEventListener("input", () => {
-        const track = stream && stream.getVideoTracks()[0];
-        const zoom = Number(zoomSlider.value);
-        zoomValue.value = `${zoom.toFixed(1)}×`;
-        if (!track || !track.applyConstraints) return;
-        track.applyConstraints({ advanced: [{ zoom }] }).catch(() => {
-          setStatus("This camera could not apply the selected zoom level.", "error");
-        });
+      stage.addEventListener("pointerdown", event => {
+        if (!stream || event.target.closest(".camera-overlay")) return;
+        activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (activePointers.size === 2) {
+          pinchStartDistance = distanceBetweenPointers();
+          pinchStartZoom = cameraZoom;
+          event.preventDefault();
+        }
       });
+
+      stage.addEventListener("pointermove", event => {
+        if (!activePointers.has(event.pointerId)) return;
+        activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (activePointers.size >= 2) {
+          applyPinchZoom(distanceBetweenPointers());
+          event.preventDefault();
+        }
+      });
+
+      function releasePointer(event) {
+        activePointers.delete(event.pointerId);
+        if (activePointers.size < 2) {
+          pinchStartDistance = 0;
+          if (activePointers.size === 1) pinchStartZoom = cameraZoom;
+        }
+      }
+
+      stage.addEventListener("pointerup", releasePointer);
+      stage.addEventListener("pointercancel", releasePointer);
+      stage.addEventListener("lostpointercapture", releasePointer);
 
       startButton.addEventListener("click", () => startCamera());
       fullscreenButton.addEventListener("click", enterCameraFullscreen);
