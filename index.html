@@ -211,17 +211,34 @@
 
     .status[data-state="error"] { color: #ff9a9a; }
     .status[data-state="success"] { color: #b7efc7; }
-    .download-link[hidden] { display: none; }
 
-    details {
-      margin-top: 6px;
-      padding-top: 12px;
-      border-top: 1px solid rgba(245, 198, 106, .16);
+    .review-dialog {
+      width: min(92vw, 520px);
+      max-width: none;
+      max-height: min(92dvh, 900px);
+      padding: 22px;
+      overflow: auto;
+      border: 1px solid rgba(245, 198, 106, .56);
+      border-radius: 20px;
+      background: linear-gradient(160deg, #28151b, #140c10);
+      color: #fff8eb;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .7);
     }
 
-    summary { color: #f2d4a0; cursor: pointer; font-size: .88rem; font-weight: 700; }
-    .upload-settings { display: grid; gap: 10px; padding-top: 12px; }
-    .upload-hint { margin: 0; color: #b9a9a0; font-size: .78rem; line-height: 1.5; }
+    .review-dialog::backdrop { background: rgba(8, 4, 6, .78); backdrop-filter: blur(5px); }
+    .review-dialog h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 1.5rem; }
+    .review-dialog p { margin: 7px 0 16px; color: var(--muted); font-size: .9rem; line-height: 1.5; }
+
+    .review-image {
+      display: block;
+      width: 100%;
+      height: min(60dvh, 660px);
+      object-fit: contain;
+      border-radius: 12px;
+      background: #090708;
+    }
+
+    .review-actions { display: grid; grid-template-columns: 1fr 1.2fr; gap: 10px; margin-top: 16px; }
 
     .privacy-note {
       margin: 28px auto 0;
@@ -250,7 +267,7 @@
     <header>
       <p class="eyebrow">UTM · 70th Convocation · 2026</p>
       <h1>Your convocation moment</h1>
-      <p class="intro">Frame your photo, choose a camera, then smile. Your finished portrait can be saved to Google Drive.</p>
+      <p class="intro">Frame your photo, choose a camera, then smile. Review your portrait before downloading it and saving it to Google Drive.</p>
     </header>
 
     <section class="booth" aria-label="Convocation photo booth">
@@ -281,23 +298,22 @@
         </div>
 
         <button class="snap" id="snapButton" type="button" disabled>Take photo</button>
-        <a class="download-link" id="downloadLink" hidden download="utm-convocation-photo.jpg">Download photo</a>
         <p class="status" id="status" role="status" aria-live="polite">Camera access is only requested when you press Start camera.</p>
-
-        <details>
-          <summary>Google Drive upload settings</summary>
-          <div class="upload-settings">
-            <label class="control-label" for="scriptUrl">Apps Script web app URL</label>
-            <input id="scriptUrl" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/AKfycbyxL-cgFnA7_SGq8PfKzGnw9lLaCRdqDeHgeOP6TrJb5SVJpNl6HARQZgH5WdijAjDd/exec" autocomplete="url">
-            <button class="secondary" id="saveUrlButton" type="button">Save upload URL</button>
-            <p class="upload-hint">After deploying the included Apps Script, paste its web app URL here. It is stored in this browser only.</p>
-          </div>
-        </details>
       </div>
     </section>
 
-    <p class="privacy-note">Your camera stays on this device until you take a photo. When an upload URL is saved, the finished image is sent to that Google Apps Script.</p>
+    <p class="privacy-note">Your camera stays on this device. A photo is sent to Google Drive only after you choose Download &amp; Save.</p>
   </main>
+
+  <dialog class="review-dialog" id="reviewDialog" aria-labelledby="reviewTitle">
+    <h2 id="reviewTitle">Review your photo</h2>
+    <p>Happy with your portrait? Download it to your device and save a copy to Google Drive, or retake it.</p>
+    <img class="review-image" id="reviewImage" alt="Preview of your framed convocation photo">
+    <div class="review-actions">
+      <button class="secondary" id="retakeButton" type="button">Retake photo</button>
+      <button class="primary" id="downloadButton" type="button">Download &amp; Save</button>
+    </div>
+  </dialog>
 
   <iframe id="uploadFrame" name="uploadFrame" title="Google Drive upload" hidden></iframe>
   <form id="uploadForm" method="post" target="uploadFrame" hidden>
@@ -315,12 +331,14 @@
       const status = document.querySelector("#status");
       const countdown = document.querySelector("#countdown");
       const capturedImage = document.querySelector("#capturedImage");
-      const downloadLink = document.querySelector("#downloadLink");
-      const scriptUrlInput = document.querySelector("#scriptUrl");
-      const saveUrlButton = document.querySelector("#saveUrlButton");
+      const reviewDialog = document.querySelector("#reviewDialog");
+      const reviewImage = document.querySelector("#reviewImage");
+      const retakeButton = document.querySelector("#retakeButton");
+      const downloadButton = document.querySelector("#downloadButton");
       const uploadForm = document.querySelector("#uploadForm");
       const uploadPayload = document.querySelector("#uploadPayload");
       const uploadFrame = document.querySelector("#uploadFrame");
+      const UPLOAD_ENDPOINT = "https://script.google.com/macros/s/AKfycbyxL-cgFnA7_SGq8PfKzGnw9lLaCRdqDeHgeOP6TrJb5SVJpNl6HARQZgH5WdijAjDd/exec";
       const FRAME_WIDTH = 2160;
       const FRAME_HEIGHT = 4096;
       const FRAME_Y_SCALE = 1.0685;
@@ -330,9 +348,9 @@
       let countdownTimer = null;
       let uploadTimer = null;
       let imageUrl = null;
+      let photoBlob = null;
+      let photoFileName = "";
       let pendingUploadId = null;
-
-      scriptUrlInput.value = localStorage.getItem("convoframe-script-url") || "";
 
       function setStatus(message, state) {
         status.textContent = message;
@@ -402,7 +420,6 @@
           video.classList.add("is-visible");
           placeholder.hidden = true;
           capturedImage.classList.remove("is-visible");
-          downloadLink.hidden = true;
           snapButton.disabled = false;
           startButton.textContent = "Camera ready";
           await refreshCameras(selectedId);
@@ -457,6 +474,7 @@
         canvas.height = FRAME_HEIGHT;
         const context = canvas.getContext("2d");
         if (!context) {
+          snapButton.disabled = false;
           setStatus("This browser could not prepare the photo. Please try another browser.", "error");
           return;
         }
@@ -468,30 +486,21 @@
           context.drawImage(frame, 0, 0, FRAME_WIDTH, FRAME_HEIGHT * FRAME_Y_SCALE);
           canvas.toBlob(blob => {
             if (!blob) {
+              snapButton.disabled = false;
               setStatus("The photo could not be created. Please try again.", "error");
               return;
             }
             if (imageUrl) URL.revokeObjectURL(imageUrl);
             imageUrl = URL.createObjectURL(blob);
+            photoBlob = blob;
             capturedImage.src = imageUrl;
+            reviewImage.src = imageUrl;
             capturedImage.classList.add("is-visible");
             video.classList.remove("is-visible");
-            downloadLink.href = imageUrl;
-            downloadLink.hidden = false;
-            snapButton.disabled = false;
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-            downloadLink.download = `utm-convocation-${timestamp}.jpg`;
-
-            const endpoint = scriptUrlInput.value.trim();
-            if (endpoint) {
-              if (!validScriptUrl(endpoint)) {
-                setStatus("Photo captured. The saved URL is not a valid Apps Script web app URL; update it in upload settings.", "error");
-                return;
-              }
-              uploadPhoto(blob, endpoint, downloadLink.download);
-            } else {
-              setStatus("Photo captured and ready to download. Add an Apps Script URL in upload settings to save it to Drive.", "success");
-            }
+            photoFileName = `utm-convocation-${timestamp}.jpg`;
+            setStatus("Review your photo. Download & Save to keep it and send it to Google Drive.");
+            reviewDialog.showModal();
           }, "image/jpeg", 0.92);
         };
         frame.onerror = () => {
@@ -522,13 +531,17 @@
 
       function uploadPhoto(blob, endpoint, fileName) {
         const reader = new FileReader();
-        reader.onerror = () => setStatus("Photo captured, but it could not be prepared for Google Drive upload.", "error");
+        reader.onerror = () => {
+          snapButton.disabled = false;
+          setStatus("Photo downloaded, but it could not be prepared for Google Drive upload.", "error");
+        };
         reader.onload = () => {
           pendingUploadId = crypto.randomUUID();
           if (uploadTimer) window.clearTimeout(uploadTimer);
           uploadTimer = window.setTimeout(() => {
             if (pendingUploadId) {
               pendingUploadId = null;
+              snapButton.disabled = false;
               setStatus("Photo captured, but Google Drive did not respond. Check your connection and Apps Script deployment.", "error");
             }
           }, 45000);
@@ -544,20 +557,42 @@
         reader.readAsDataURL(blob);
       }
 
+      function retakePhoto() {
+        reviewDialog.close();
+        photoBlob = null;
+        reviewImage.removeAttribute("src");
+        capturedImage.classList.remove("is-visible");
+        video.classList.add("is-visible");
+        snapButton.disabled = false;
+        setStatus("Ready for another photo.");
+      }
+
+      function downloadAndSavePhoto() {
+        if (!photoBlob || !validScriptUrl(UPLOAD_ENDPOINT)) {
+          setStatus("The photo or Google Drive upload configuration is unavailable. Please try again.", "error");
+          return;
+        }
+
+        const link = document.createElement("a");
+        link.href = imageUrl;
+        link.download = photoFileName;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        reviewDialog.close();
+        snapButton.disabled = true;
+        uploadPhoto(photoBlob, UPLOAD_ENDPOINT, photoFileName);
+      }
+
       startButton.addEventListener("click", () => startCamera());
       switchButton.addEventListener("click", switchLens);
       snapButton.addEventListener("click", beginCountdown);
       cameraSelect.addEventListener("change", () => startCamera(cameraSelect.value));
-
-      saveUrlButton.addEventListener("click", () => {
-        const value = scriptUrlInput.value.trim();
-        if (value && !validScriptUrl(value)) {
-          setStatus("Enter the HTTPS web app URL ending in /exec from your Apps Script deployment.", "error");
-          return;
-        }
-        if (value) localStorage.setItem("convoframe-script-url", value);
-        else localStorage.removeItem("convoframe-script-url");
-        setStatus(value ? "Google Apps Script upload URL saved in this browser." : "Google Apps Script upload URL cleared.", "success");
+      retakeButton.addEventListener("click", retakePhoto);
+      downloadButton.addEventListener("click", downloadAndSavePhoto);
+      reviewDialog.addEventListener("cancel", event => {
+        event.preventDefault();
+        retakePhoto();
       });
 
       window.addEventListener("message", event => {
@@ -569,8 +604,10 @@
           uploadTimer = null;
         }
         if (event.data.ok) {
+          snapButton.disabled = false;
           setStatus("Your framed photo was saved to Google Drive.", "success");
         } else {
+          snapButton.disabled = false;
           setStatus(`Photo captured, but Google Drive upload failed: ${event.data.message || "Unknown error"}`, "error");
         }
       });
