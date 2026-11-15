@@ -23,7 +23,6 @@ h1{margin:0;font:600 clamp(1.7rem,5vw,2.45rem) Georgia,serif;letter-spacing:-.02
 .status[data-state=error]{color:#ff9a9a}
 .status[data-state=success]{color:#b7efc7}
 
-/* Gallery: auto-scrolling marquee */
 .gallery-title{margin:0 0 12px;color:var(--gold);font-size:.78rem;font-weight:750;letter-spacing:.18em;text-align:center;text-transform:uppercase}
 .gallery{overflow:hidden;-webkit-mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent);mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent)}
 .track{display:flex;gap:14px;width:max-content;animation:scroll var(--duration,30s) linear infinite}
@@ -34,7 +33,6 @@ h1{margin:0;font:600 clamp(1.7rem,5vw,2.45rem) Georgia,serif;letter-spacing:-.02
 .slide.empty{display:grid;place-items:center;background:url("./Convo%20frame.png") center top/cover no-repeat,#1c1115;color:#b9a99c;font-size:.8rem;line-height:1.5;text-align:center;opacity:.6}
 .gallery-note{margin:10px 0 0;color:#aa9990;font-size:.8rem;text-align:center}
 
-/* Full-screen camera */
 .stage{position:fixed;z-index:30;inset:0;display:none;align-items:center;justify-content:center;background:#000;touch-action:none}
 .stage.active{display:flex}
 .view{position:relative;height:min(100%,calc(100vw * 16 / 9));aspect-ratio:9/16;overflow:hidden;background:#090708}
@@ -158,7 +156,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
     gallery = $("#gallery"), track = $("#track"), galleryNote = $("#galleryNote");
 
   const UPLOAD_ENDPOINT = "https://script.google.com/macros/s/AKfycbyxL-cgFnA7_SGq8PfKzGnw9lLaCRdqDeHgeOP6TrJb5SVJpNl6HARQZgH5WdijAjDd/exec";
-  // The gallery list comes from the same Apps Script web app (see doGet in gallery.gs).
   const GALLERY_ENDPOINT = UPLOAD_ENDPOINT + "?action=gallery";
   const GALLERY_REFRESH_MS = 60000;
   const SERVICE_LOCATION = { latitude: 1.5586563, longitude: 103.6383276, radiusMeters: 100 };
@@ -166,16 +163,15 @@ button:disabled{cursor:not-allowed;opacity:.5}
   const LOCATION_CACHE_MS = 10 * 60 * 1000, CACHE_KEY = "utm-booth-location-ok";
   const FRAME_WIDTH = 2160, FRAME_HEIGHT = 3840, FRAME_Y_SCALE = 1.0685;
   const UPLOAD_WIDTH = 1080, UPLOAD_HEIGHT = 1920;
-  const WINDOW_HEIGHT = 0.69, VIEW_ASPECT = FRAME_WIDTH / FRAME_HEIGHT; // WINDOW_HEIGHT: share of the frame height the photo window needs filled
+  const WINDOW_HEIGHT = 0.69, VIEW_ASPECT = FRAME_WIDTH / FRAME_HEIGHT;
 
   let stream = null, cameras = [], countdownTimer = null, toastTimer = null, imageUrl = null,
     photoBlob = null, photoCanvas = null, downloadUrl = null, photoToken = 0, photoFileName = "", cameraZoom = 1, nativeZoomRange = null,
-    pinchStartDistance = 0, pinchStartZoom = 1, usedNative = false;
+    pinchStartDistance = 0, pinchStartZoom = 1;
   const activePointers = new Map(), pendingUploads = new Map();
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const nextPaint = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 20)));
   const toBlob = (c, q) => new Promise(r => c.toBlob(r, "image/jpeg", q));
-  // Load the frame once up front instead of on every capture.
   let frameImage = null;
   const frameReady = new Promise(resolve => {
     const img = new Image();
@@ -184,7 +180,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
     img.src = "./Convo%20frame.png";
   });
 
-  /* ---------- Messages: page status, plus the loading message / toast while the camera is open ---------- */
+  /* ---------- Messages ---------- */
   function showToast(message, state) {
     toast.textContent = message;
     toast.dataset.state = state || "";
@@ -214,7 +210,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
         finished = true;
         navigator.geolocation.clearWatch(watchId);
         clearTimeout(timer);
-        best ? resolve(best) : reject(lastError || { code: 2 });
+        best ? resolve(best) : reject(lastError || { code: 2, message: "No position received" });
       };
       watchId = navigator.geolocation.watchPosition(p => {
         if (!best || p.coords.accuracy < best.coords.accuracy) best = p;
@@ -246,9 +242,11 @@ button:disabled{cursor:not-allowed;opacity:.5}
         ? "Sorry, you're outside the service area. Please come to Dewan Canselori Hall, then tap Try again."
         : "We couldn't pin down your location well enough. Step outside or near a window, then tap Try again.", "error");
     } catch (error) {
-      setStatus(error.code === 1
+      console.log("Geo error:", error.code, error.message, "secure:", window.isSecureContext);
+      setStatus((error.code === 1
         ? "Location permission is needed to confirm you're at the venue. Allow it in your browser settings, then tap Try again."
-        : "We couldn't get your location. Turn on location services, then tap Try again.", "error");
+        : "We couldn't get your location. Turn on location services, then tap Try again.")
+        + ` [code ${error.code}, secure: ${window.isSecureContext}]`, "error");
     }
     return false;
   }
@@ -260,7 +258,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
     const s = track.getSettings();
     cameraZoom = nativeZoomRange && Number.isFinite(s.zoom) ? s.zoom : 1;
     if (nativeZoomRange && cameraZoom > nativeZoomRange.min && track.applyConstraints) {
-      // Start at the camera's widest view, like the phone's own camera app.
       track.applyConstraints({ advanced: [{ zoom: nativeZoomRange.min }] })
         .then(() => { cameraZoom = nativeZoomRange.min; updateZoomDisplay(); }).catch(() => {});
     }
@@ -285,15 +282,14 @@ button:disabled{cursor:not-allowed;opacity:.5}
     }
   }
 
-  /* ---------- Full-screen booth ---------- */
+  /* ---------- Full-screen booth (CSS only: the stage is position:fixed; inset:0) ---------- */
   function openBooth() {
     stage.classList.add("active");
     document.body.classList.add("booth-open");
     stageMsg.hidden = false;
     stageText.textContent = "Opening camera…";
     snapButton.disabled = switchButton.disabled = cameraSelect.disabled = true;
-    // Called straight from the tap so the browser allows real full screen; the stage already covers the viewport either way.
-    if (stage.requestFullscreen) stage.requestFullscreen().then(() => { usedNative = true; }).catch(() => {});
+    // Native requestFullscreen() removed: it can dismiss the location/camera permission prompts.
   }
 
   function stopStream() {
@@ -316,8 +312,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
     stopStream();
     stage.classList.remove("active");
     document.body.classList.remove("booth-open");
-    if (document.fullscreenElement && document.exitFullscreen) { usedNative = false; document.exitFullscreen().catch(() => {}); }
-    usedNative = false;
     startButton.disabled = false;
     startButton.textContent = "Start camera";
   }
@@ -342,7 +336,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
   async function cameraAlreadyAllowed() {
     try { return (await navigator.permissions.query({ name: "camera" })).state === "granted"; } catch { return false; }
   }
-  // getUserMedia can hang (never answer) on some phones when it dislikes a constraint, so give it a deadline.
   function getStream(constraints, ms) {
     const request = navigator.mediaDevices.getUserMedia({ audio: false, video: constraints });
     if (!ms) return request;
@@ -354,7 +347,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
       request.then(st => { clearTimeout(timer); resolve(st); }, e => { clearTimeout(timer); reject(e); });
     });
   }
-  // Ask the already-open camera for 9:16. If the camera can't do it, keep what it gave us (the preview adapts).
   async function upgradeResolution(track) {
     const wanted = [
       { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } },
@@ -383,7 +375,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
     try {
       const target = cameras.find(c => c.deviceId === deviceId);
       const facing = target ? (/back|rear|environment/i.test(target.label) ? "environment" : "user") : facingMode || "user";
-      // Open the camera with no size demands first: every device answers that, and it shows the permission prompt.
       const attempts = [deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: facing } }];
       if (deviceId) attempts.push({ facingMode: { ideal: facing } });
       attempts.push(true);
@@ -391,7 +382,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
       let next, lastError;
       for (let i = 0; i < attempts.length; i++) {
         try {
-          // No deadline while the permission prompt may still be open; otherwise give up on a silent hang after 8s.
           next = await getStream(attempts[i], granted || i > 0 ? 8000 : 0);
           break;
         } catch (e) {
@@ -401,7 +391,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
         }
       }
       if (!next) throw lastError;
-      if (!stage.classList.contains("active")) { next.getTracks().forEach(t => t.stop()); return; } // closed while waiting
+      if (!stage.classList.contains("active")) { next.getTracks().forEach(t => t.stop()); return; }
 
       stream = next;
       video.srcObject = stream;
@@ -447,16 +437,13 @@ button:disabled{cursor:not-allowed;opacity:.5}
   }
 
   /* ---------- Capture ---------- */
-  // The camera image is scaled to the full frame width (like the phone's own camera app) and only enlarged
-  // when it must be, to fill the frame's photo window. That gives the same wide view instead of a zoomed-in crop.
-  function fitScale(vw, vh) { // frame-widths per video pixel
+  function fitScale(vw, vh) {
     return Math.max(1 / vw, WINDOW_HEIGHT / (VIEW_ASPECT * vh));
   }
   function hasGap(vw, vh) {
     const k = fitScale(vw, vh);
     return vw * k < 0.995 || vh * k * VIEW_ASPECT < 0.995;
   }
-  // If the camera shape doesn't fill the frame (4:3, square…), fill the gap with a blurred copy of the picture instead of black.
   function drawBackdrop(ctx, vw, vh) {
     if (!hasGap(vw, vh)) return;
     const t = document.createElement("canvas");
@@ -467,21 +454,21 @@ button:disabled{cursor:not-allowed;opacity:.5}
     tc.drawImage(video, (36 - vw * c) / 2, (64 - vh * c) / 2, vw * c, vh * c);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(t, 0, 0, FRAME_WIDTH, FRAME_HEIGHT); // upscaling the tiny copy gives the blur
+    ctx.drawImage(t, 0, 0, FRAME_WIDTH, FRAME_HEIGHT);
     ctx.fillStyle = "rgba(0,0,0,.25)";
     ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
   }
   function layoutVideo() {
     if (!video.videoWidth) return;
     const k = fitScale(video.videoWidth, video.videoHeight);
-    const w = video.videoWidth * k, h = video.videoHeight * k * VIEW_ASPECT; // fractions of the frame
+    const w = video.videoWidth * k, h = video.videoHeight * k * VIEW_ASPECT;
     Object.assign(video.style, { width: `${w * 100}%`, height: `${h * 100}%`, left: `${(1 - w) / 2 * 100}%`, top: `${(1 - h) / 2 * 100}%` });
     bgVideo.hidden = !hasGap(video.videoWidth, video.videoHeight);
   }
 
   async function capturePhoto() {
     processing.hidden = false;
-    await nextPaint(); // let the spinner show before the heavy work starts
+    await nextPaint();
     try {
       if (!await frameReady) throw new Error("frame");
       const canvas = document.createElement("canvas");
@@ -500,7 +487,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
       ctx.restore();
       ctx.drawImage(frameImage, 0, 0, FRAME_WIDTH, FRAME_HEIGHT * FRAME_Y_SCALE);
 
-      // Show a lighter preview straight away; the full-size file is prepared in the background.
       const small = document.createElement("canvas");
       small.width = UPLOAD_WIDTH;
       small.height = UPLOAD_HEIGHT;
@@ -548,7 +534,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
     }, 1000);
   }
 
-  /* ---------- Save & upload (never blocks the next photo) ---------- */
+  /* ---------- Save & upload ---------- */
   function finishUpload(id, ok, timedOut) {
     const p = pendingUploads.get(id);
     if (!p) return;
@@ -556,7 +542,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
     p.iframe.remove();
     pendingUploads.delete(id);
     if (ok) {
-      // The photo is now listed from Drive, so drop the temporary on-device copy to avoid a duplicate.
       loadGallery().then(loaded => { if (loaded) { localPhotos = localPhotos.filter(x => x.id !== id); renderGallery(); } });
     }
   }
@@ -608,7 +593,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
     localPhotos.unshift({ id, url: thumb.toDataURL("image/jpeg", 0.8) });
     localPhotos.length = Math.min(localPhotos.length, 20);
     renderGallery();
-    resumeCamera(); // straight back to the live camera for the next person
+    resumeCamera();
   }
 
   /* ---------- Gallery ---------- */
@@ -642,7 +627,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
       const data = await res.json();
       const urls = (Array.isArray(data) ? data : data.photos || []).map(x => typeof x === "string" ? x : x && x.url).filter(Boolean).slice(0, 60);
       const key = urls.join("|");
-      if (key === galleryKey) return true; // unchanged: don't restart the scroll
+      if (key === galleryKey) return true;
       galleryKey = key;
       serverPhotos = urls;
       renderGallery();
@@ -677,13 +662,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
   retakeButton.addEventListener("click", retakePhoto);
   downloadButton.addEventListener("click", downloadAndSavePhoto);
   reviewDialog.addEventListener("cancel", e => { e.preventDefault(); retakePhoto(); });
-  // Leaving native full screen (Esc / back gesture) closes the camera too.
-  document.addEventListener("fullscreenchange", () => {
-    if (!document.fullscreenElement && usedNative && stage.classList.contains("active")) {
-      closeBooth();
-      setStatus("Camera closed. Tap Start camera for another photo.");
-    }
-  });
   window.addEventListener("message", e => {
     const d = e.data;
     if (!d || d.type !== "convoframe-upload") return;
