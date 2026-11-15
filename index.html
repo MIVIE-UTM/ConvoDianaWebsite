@@ -556,12 +556,9 @@ button:disabled{cursor:not-allowed;opacity:.5}
     p.iframe.remove();
     pendingUploads.delete(id);
     if (ok) {
-      setStatus("Saved to Google Drive ✓", "success");
       // The photo is now listed from Drive, so drop the temporary on-device copy to avoid a duplicate.
       loadGallery().then(loaded => { if (loaded) { localPhotos = localPhotos.filter(x => x.id !== id); renderGallery(); } });
-    } else setStatus(timedOut
-      ? "Your photo was downloaded, but we couldn't confirm the Google Drive upload."
-      : "Your photo was downloaded, but the Google Drive upload failed.", "error");
+    }
   }
 
   function uploadPhoto(canvas, fileName) {
@@ -611,7 +608,6 @@ button:disabled{cursor:not-allowed;opacity:.5}
     localPhotos.unshift({ id, url: thumb.toDataURL("image/jpeg", 0.8) });
     localPhotos.length = Math.min(localPhotos.length, 20);
     renderGallery();
-    setStatus("Photo downloaded. Saving a copy to Google Drive…");
     resumeCamera(); // straight back to the live camera for the next person
   }
 
